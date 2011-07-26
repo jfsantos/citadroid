@@ -1,12 +1,6 @@
 package com.seaandsailor.citadroid;
 
-import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
-import java.util.Random;
-
 import com.seaandsailor.citadroid.R;
 
 import android.app.Activity;
@@ -20,35 +14,20 @@ public class CitaDroid extends Activity {
 	/** Called when the activity is first created. */
 	private Button generate;
 	private TextView text;
-	private ArrayList<String> quotes;
-	private Random rnd;
+	private QuoteDb quotes;
 
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		setContentView(R.layout.main);
-		quotes = new ArrayList<String>();
-		rnd = new Random(System.currentTimeMillis());
 		InputStream txt = getResources().openRawResource(R.raw.batema);
-		try {
-			BufferedReader input = new BufferedReader(
-					new InputStreamReader(txt));
-			try {
-				String line = null;
-				while ((line = input.readLine()) != null) {
-					quotes.add(line);
-				}
-			} finally {
-				input.close();
-			}
-		} catch (IOException ex) {
-			ex.printStackTrace();
-		}
+		quotes = new QuoteDb(txt);
 		generate = (Button) this.findViewById(R.id.button);
 		text = (TextView) this.findViewById(R.id.text);
+		text.setText(quotes.getQuote());
 		this.generate.setOnClickListener(new OnClickListener() {
 			public void onClick(View v) {
-				text.setText(quotes.get(rnd.nextInt(quotes.size())));
+				text.setText(quotes.getQuote());
 			}
 		});
 	}
