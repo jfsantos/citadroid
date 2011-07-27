@@ -7,8 +7,7 @@
     <TextView 
     	android:id="@+id/linktoapp"
     	android:text="Uhuhuhuhu!"
-    	android:layout_width="wrap_content"
     	android:layout_height="wrap_content"
-    	android:background="#FFFFFF">
+    	android:background="#FFFFFF" android:layout_width="match_parent">
     </TextView>
 </LinearLayout>

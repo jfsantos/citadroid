@@ -1,6 +1,6 @@
 /*
- * 
- *  
+ * Widget para mostrar quotes na homescreen.
+ * A configuração padrão é de um update a cada 30 minutos (mínimo permitido).
  */
 
 package com.seaandsailor.citadroid;
