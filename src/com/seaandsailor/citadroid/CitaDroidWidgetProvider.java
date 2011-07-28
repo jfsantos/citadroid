@@ -5,9 +5,11 @@
 
 package com.seaandsailor.citadroid;
 
+import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.Context;
+import android.content.Intent;
 
 import android.widget.RemoteViews;
 
@@ -21,11 +23,16 @@ public class CitaDroidWidgetProvider extends AppWidgetProvider {
 			updateAppWidget(context, appWidgetManager, id, quote);
 		}
 	}
-
+	
 	private void updateAppWidget(Context context,
 			AppWidgetManager appWidgetManager, int id, String quote) {
+		Intent intent = new Intent(context, CitaDroid.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(context, 0, intent, 0);
+		
 		RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.citadroid_widget);
 		views.setTextViewText(R.id.linktoapp, quote);
+		
+		views.setOnClickPendingIntent(R.id.linktoapp, pendingIntent);
 		appWidgetManager.updateAppWidget(id, views);
 	}
 
