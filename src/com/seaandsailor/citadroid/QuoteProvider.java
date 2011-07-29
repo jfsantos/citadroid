@@ -16,7 +16,7 @@
 
 package com.seaandsailor.citadroid;
 
-import com.seaandsailor.citadroid.Quote.Quotes;
+import com.seaandsailor.citadroid.Quotes.Quote;
 
 import android.content.ContentProvider;
 import android.content.ContentUris;
@@ -27,12 +27,17 @@ import android.content.res.Resources;
 import android.database.Cursor;
 import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteQueryBuilder;
 import android.net.Uri;
 import android.text.TextUtils;
 import android.util.Log;
 
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.HashMap;
 
 /**
@@ -41,207 +46,362 @@ import java.util.HashMap;
  */
 public class QuoteProvider extends ContentProvider {
 
-    private static final String TAG = "QuoteProvider";
+	private static final String TAG = "QuoteProvider";
 
-    private static final String DATABASE_NAME = "quotes.db";
-    private static final int DATABASE_VERSION = 2;
-    private static final String QUOTES_TABLE_NAME = "quotes";
+	// The Android's default system path of your application database.
+	private static String DATABASE_PATH = "/data/data/com.seaandsailor.citadroid/databases/";
 
-    private static HashMap<String, String> sQuotesProjectionMap;
-    //private static HashMap<String, String> sLiveFolderProjectionMap;
+	private static final String DATABASE_NAME = "quotes.db";
+	private static final int DATABASE_VERSION = 2;
+	private static final String QUOTES_TABLE_NAME = "quotes";
 
-    private static final int QUOTES = 1;
-    private static final int QUOTE_ID = 2;
-    private static final int LIVE_FOLDER_QUOTES = 3;
+	private static HashMap<String, String> sQuotesProjectionMap;
+	// private static HashMap<String, String> sLiveFolderProjectionMap;
 
-    private static final UriMatcher sUriMatcher;
+	private static final int QUOTES = 1;
+	private static final int QUOTE_ID = 2;
+	private static final int LIVE_FOLDER_QUOTES = 3;
 
-    /**
-     * This class helps open, create, and upgrade the database file.
-     */
-    private static class DatabaseHelper extends SQLiteOpenHelper {
+	private static final UriMatcher sUriMatcher;
 
-        DatabaseHelper(Context context) {
-            super(context, DATABASE_NAME, null, DATABASE_VERSION);
-        }
+	/**
+	 * This class helps open, create, and upgrade the database file.
+	 */
+	private static class DatabaseHelper extends SQLiteOpenHelper {
 
-        @Override
-        public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE " + QUOTES_TABLE_NAME + " ("
-                    + Quotes._ID + " INTEGER PRIMARY KEY,"
-                    + Quotes.AUTHOR + " TEXT,"
-                    + Quotes.QUOTE + " TEXT,"
-                    + ");");
-        }
+		private SQLiteDatabase myDataBase;
 
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            Log.w(TAG, "Upgrading database from version " + oldVersion + " to "
-                    + newVersion + ", which will destroy all old data");
-            db.execSQL("DROP TABLE IF EXISTS quotes");
-            onCreate(db);
-        }
-    }
+		private final Context myContext;
 
-    private DatabaseHelper mOpenHelper;
+		DatabaseHelper(Context context) {
+			super(context, DATABASE_NAME, null, DATABASE_VERSION);
+			myContext = context;
+		}
 
-    @Override
-    public boolean onCreate() {
-        mOpenHelper = new DatabaseHelper(getContext());
-        return true;
-    }
+		/**
+		 * Creates a empty database on the system and rewrites it with your own
+		 * database.
+		 * */
+		public void createDataBase() throws IOException {
 
-    @Override
-    public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
-            String sortOrder) {
-        SQLiteQueryBuilder qb = new SQLiteQueryBuilder();
-        qb.setTables(QUOTES_TABLE_NAME);
+			boolean dbExist = checkDataBase();
 
-        switch (sUriMatcher.match(uri)) {
-        case QUOTES:
-            qb.setProjectionMap(sQuotesProjectionMap);
-            break;
+			if (dbExist) {
+				// do nothing - database already exist
+			} else {
 
-        case QUOTE_ID:
-            qb.setProjectionMap(sQuotesProjectionMap);
-            qb.appendWhere(Quotes._ID + "=" + uri.getPathSegments().get(1));
-            break;
-            
-        default:
-            throw new IllegalArgumentException("Unknown URI " + uri);
-        }
+				// By calling this method an empty database will be created
+				// into the default system path
+				// of your application so we are gonna be able to overwrite that
+				// database with our database.
+				this.getReadableDatabase();
 
-        // If no sort order is specified use the default
-        String orderBy;
-        if (TextUtils.isEmpty(sortOrder)) {
-            orderBy = Quote.Quotes.DEFAULT_SORT_ORDER;
-        } else {
-            orderBy = sortOrder;
-        }
+				try {
 
-        // Get the database and run the query
-        SQLiteDatabase db = mOpenHelper.getReadableDatabase();
-        Cursor c = qb.query(db, projection, selection, selectionArgs, null, null, orderBy);
+					copyDataBase();
 
-        // Tell the cursor what uri to watch, so it knows when its source data changes
-        c.setNotificationUri(getContext().getContentResolver(), uri);
-        return c;
-    }
+				} catch (IOException e) {
 
-    @Override
-    public String getType(Uri uri) {
-        switch (sUriMatcher.match(uri)) {
-        case QUOTES:
-        case LIVE_FOLDER_QUOTES:
-            return Quotes.CONTENT_TYPE;
+					throw new Error("Error copying database");
 
-        case QUOTE_ID:
-            return Quotes.CONTENT_ITEM_TYPE;
+				}
+			}
 
-        default:
-            throw new IllegalArgumentException("Unknown URI " + uri);
-        }
-    }
+		}
 
-    @Override
-    public Uri insert(Uri uri, ContentValues initialValues) {
-        // Validate the requested uri
-        if (sUriMatcher.match(uri) != QUOTES) {
-            throw new IllegalArgumentException("Unknown URI " + uri);
-        }
+		/**
+		 * Check if the database already exist to avoid re-copying the file each
+		 * time you open the application.
+		 * 
+		 * @return true if it exists, false if it doesn't
+		 */
+		private boolean checkDataBase() {
 
-        ContentValues values;
-        if (initialValues != null) {
-            values = new ContentValues(initialValues);
-        } else {
-            values = new ContentValues();
-        }
+			SQLiteDatabase checkDB = null;
 
-        // Make sure that the fields are all set
-        
-        if (values.containsKey(Quote.Quotes.AUTHOR) == false) {
-            Resources r = Resources.getSystem();
-            values.put(Quote.Quotes.AUTHOR, r.getString(android.R.string.unknownName));
-        }
+			try {
+				String myPath = DATABASE_PATH + DATABASE_NAME;
+				checkDB = SQLiteDatabase.openDatabase(myPath, null,
+						SQLiteDatabase.OPEN_READONLY);
 
-        if (values.containsKey(Quote.Quotes.QUOTE) == false) {
-            values.put(Quote.Quotes.QUOTE, "");
-        }
+			} catch (SQLiteException e) {
 
-        SQLiteDatabase db = mOpenHelper.getWritableDatabase();
-        long rowId = db.insert(QUOTES_TABLE_NAME, Quotes.QUOTE, values);
-        if (rowId > 0) {
-            Uri noteUri = ContentUris.withAppendedId(Quote.Quotes.CONTENT_URI, rowId);
-            getContext().getContentResolver().notifyChange(noteUri, null);
-            return noteUri;
-        }
+				// database does't exist yet.
 
-        throw new SQLException("Failed to insert row into " + uri);
-    }
+			}
 
-    @Override
-    public int delete(Uri uri, String where, String[] whereArgs) {
-        SQLiteDatabase db = mOpenHelper.getWritableDatabase();
-        int count;
-        switch (sUriMatcher.match(uri)) {
-        case QUOTES:
-            count = db.delete(QUOTES_TABLE_NAME, where, whereArgs);
-            break;
+			if (checkDB != null) {
 
-        case QUOTE_ID:
-            String noteId = uri.getPathSegments().get(1);
-            count = db.delete(QUOTES_TABLE_NAME, Quotes._ID + "=" + noteId
-                    + (!TextUtils.isEmpty(where) ? " AND (" + where + ')' : ""), whereArgs);
-            break;
+				checkDB.close();
 
-        default:
-            throw new IllegalArgumentException("Unknown URI " + uri);
-        }
+			}
 
-        getContext().getContentResolver().notifyChange(uri, null);
-        return count;
-    }
+			return checkDB != null ? true : false;
+		}
 
-    @Override
-    public int update(Uri uri, ContentValues values, String where, String[] whereArgs) {
-        SQLiteDatabase db = mOpenHelper.getWritableDatabase();
-        int count;
-        switch (sUriMatcher.match(uri)) {
-        case QUOTES:
-            count = db.update(QUOTES_TABLE_NAME, values, where, whereArgs);
-            break;
+		/**
+		 * Copies your database from your local assets-folder to the just
+		 * created empty database in the system folder, from where it can be
+		 * accessed and handled. This is done by transfering bytestream.
+		 * */
+		private void copyDataBase() throws IOException {
 
-        case QUOTE_ID:
-            String noteId = uri.getPathSegments().get(1);
-            count = db.update(QUOTES_TABLE_NAME, values, Quotes._ID + "=" + noteId
-                    + (!TextUtils.isEmpty(where) ? " AND (" + where + ')' : ""), whereArgs);
-            break;
+			// Open your local db as the input stream
+			InputStream myInput = myContext.getAssets().open(DATABASE_NAME);
 
-        default:
-            throw new IllegalArgumentException("Unknown URI " + uri);
-        }
+			// Path to the just created empty db
+			String outFileName = DATABASE_PATH + DATABASE_NAME;
 
-        getContext().getContentResolver().notifyChange(uri, null);
-        return count;
-    }
+			// Open the empty db as the output stream
+			OutputStream myOutput = new FileOutputStream(outFileName);
 
-    static {
-        sUriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
-        sUriMatcher.addURI(Quote.AUTHORITY, "quotes", QUOTES);
-        sUriMatcher.addURI(Quote.AUTHORITY, "quotes/#", QUOTE_ID);
-        //sUriMatcher.addURI(Quote.AUTHORITY, "live_folders/quotes", LIVE_FOLDER_QUOTES);
+			// transfer bytes from the inputfile to the outputfile
+			byte[] buffer = new byte[1024];
+			int length;
+			while ((length = myInput.read(buffer)) > 0) {
+				myOutput.write(buffer, 0, length);
+			}
 
-        sQuotesProjectionMap = new HashMap<String, String>();
-        sQuotesProjectionMap.put(Quotes._ID, Quotes._ID);
-        sQuotesProjectionMap.put(Quotes.AUTHOR, Quotes.AUTHOR);
-        sQuotesProjectionMap.put(Quotes.QUOTE, Quotes.QUOTE);
+			// Close the streams
+			myOutput.flush();
+			myOutput.close();
+			myInput.close();
 
-        // Support for Live Folders.
-        //sLiveFolderProjectionMap = new HashMap<String, String>();
-        //sLiveFolderProjectionMap.put(LiveFolders._ID, Quotes._ID + " AS " +
-        //        LiveFolders._ID);
-        //sLiveFolderProjectionMap.put(LiveFolders.NAME, Quotes.AUTHOR + " AS " +
-        //        LiveFolders.NAME);
-        // Add more columns here for more robust Live Folders.
-    }
+		}
+
+		public void openDataBase() throws SQLException {
+
+			// Open the database
+			String myPath = DATABASE_PATH + DATABASE_NAME;
+			myDataBase = SQLiteDatabase.openDatabase(myPath, null,
+					SQLiteDatabase.OPEN_READONLY);
+
+		}
+
+		@Override
+		public synchronized void close() {
+
+			if (myDataBase != null)
+				myDataBase.close();
+
+			super.close();
+
+		}
+
+		@Override
+		public void onCreate(SQLiteDatabase db) {
+
+		}
+
+		@Override
+		public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+
+		}
+
+	}
+
+	private DatabaseHelper mOpenHelper;
+
+	@Override
+	public boolean onCreate() {
+		mOpenHelper = new DatabaseHelper(getContext());
+		try {
+
+			mOpenHelper.createDataBase();
+
+		} catch (IOException ioe) {
+
+			throw new Error("Unable to create database");
+
+		}
+
+		try {
+
+			mOpenHelper.openDataBase();
+
+		} catch (SQLException sqle) {
+
+			throw sqle;
+
+		}
+
+		return true;
+	}
+
+	@Override
+	public Cursor query(Uri uri, String[] projection, String selection,
+			String[] selectionArgs, String sortOrder) {
+		SQLiteQueryBuilder qb = new SQLiteQueryBuilder();
+		qb.setTables(QUOTES_TABLE_NAME);
+
+		switch (sUriMatcher.match(uri)) {
+		case QUOTES:
+			qb.setProjectionMap(sQuotesProjectionMap);
+			break;
+
+		case QUOTE_ID:
+			qb.setProjectionMap(sQuotesProjectionMap);
+			qb.appendWhere(Quote._ID + "=" + uri.getPathSegments().get(1));
+			break;
+
+		default:
+			throw new IllegalArgumentException("Unknown URI " + uri);
+		}
+
+		// If no sort order is specified use the default
+		String orderBy;
+		if (TextUtils.isEmpty(sortOrder)) {
+			orderBy = Quotes.Quote.DEFAULT_SORT_ORDER;
+		} else {
+			orderBy = sortOrder;
+		}
+
+		// Get the database and run the query
+		SQLiteDatabase db = mOpenHelper.getReadableDatabase();
+		Cursor c = qb.query(db, projection, selection, selectionArgs, null,
+				null, orderBy);
+
+		// Tell the cursor what uri to watch, so it knows when its source data
+		// changes
+		c.setNotificationUri(getContext().getContentResolver(), uri);
+		return c;
+	}
+
+	@Override
+	public String getType(Uri uri) {
+		switch (sUriMatcher.match(uri)) {
+		case QUOTES:
+		case LIVE_FOLDER_QUOTES:
+			return Quote.CONTENT_TYPE;
+
+		case QUOTE_ID:
+			return Quote.CONTENT_ITEM_TYPE;
+
+		default:
+			throw new IllegalArgumentException("Unknown URI " + uri);
+		}
+	}
+
+	@Override
+	public Uri insert(Uri uri, ContentValues initialValues) {
+		// Validate the requested uri
+		if (sUriMatcher.match(uri) != QUOTES) {
+			throw new IllegalArgumentException("Unknown URI " + uri);
+		}
+
+		ContentValues values;
+		if (initialValues != null) {
+			values = new ContentValues(initialValues);
+		} else {
+			values = new ContentValues();
+		}
+
+		// Make sure that the fields are all set
+
+		if (values.containsKey(Quotes.Quote.AUTHOR) == false) {
+			Resources r = Resources.getSystem();
+			values.put(Quotes.Quote.AUTHOR,
+					r.getString(android.R.string.unknownName));
+		}
+
+		if (values.containsKey(Quotes.Quote.QUOTE) == false) {
+			values.put(Quotes.Quote.QUOTE, "");
+		}
+
+		SQLiteDatabase db = mOpenHelper.getWritableDatabase();
+		long rowId = db.insert(QUOTES_TABLE_NAME, Quote.QUOTE, values);
+		if (rowId > 0) {
+			Uri noteUri = ContentUris.withAppendedId(Quotes.Quote.CONTENT_URI,
+					rowId);
+			getContext().getContentResolver().notifyChange(noteUri, null);
+			return noteUri;
+		}
+
+		throw new SQLException("Failed to insert row into " + uri);
+	}
+
+	@Override
+	public int delete(Uri uri, String where, String[] whereArgs) {
+		SQLiteDatabase db = mOpenHelper.getWritableDatabase();
+		int count;
+		switch (sUriMatcher.match(uri)) {
+		case QUOTES:
+			count = db.delete(QUOTES_TABLE_NAME, where, whereArgs);
+			break;
+
+		case QUOTE_ID:
+			String noteId = uri.getPathSegments().get(1);
+			count = db.delete(QUOTES_TABLE_NAME,
+					Quote._ID
+							+ "="
+							+ noteId
+							+ (!TextUtils.isEmpty(where) ? " AND (" + where
+									+ ')' : ""), whereArgs);
+			break;
+
+		default:
+			throw new IllegalArgumentException("Unknown URI " + uri);
+		}
+
+		getContext().getContentResolver().notifyChange(uri, null);
+		return count;
+	}
+
+	@Override
+	public int update(Uri uri, ContentValues values, String where,
+			String[] whereArgs) {
+		SQLiteDatabase db = mOpenHelper.getWritableDatabase();
+		int count;
+		switch (sUriMatcher.match(uri)) {
+		case QUOTES:
+			count = db.update(QUOTES_TABLE_NAME, values, where, whereArgs);
+			break;
+
+		case QUOTE_ID:
+			String noteId = uri.getPathSegments().get(1);
+			count = db.update(QUOTES_TABLE_NAME, values,
+					Quote._ID
+							+ "="
+							+ noteId
+							+ (!TextUtils.isEmpty(where) ? " AND (" + where
+									+ ')' : ""), whereArgs);
+			break;
+
+		default:
+			throw new IllegalArgumentException("Unknown URI " + uri);
+		}
+
+		getContext().getContentResolver().notifyChange(uri, null);
+		return count;
+	}
+	
+	/**
+	 * Returns a random Quote
+	 * @return
+	 */
+	public String[] getQuote() {
+		return new String[2];
+	}
+
+	static {
+		sUriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
+		sUriMatcher.addURI(Quotes.AUTHORITY, "quotes", QUOTES);
+		sUriMatcher.addURI(Quotes.AUTHORITY, "quotes/#", QUOTE_ID);
+		// sUriMatcher.addURI(Quote.AUTHORITY, "live_folders/quotes",
+		// LIVE_FOLDER_QUOTES);
+
+		sQuotesProjectionMap = new HashMap<String, String>();
+		sQuotesProjectionMap.put(Quote._ID, Quote._ID);
+		sQuotesProjectionMap.put(Quote.AUTHOR, Quote.AUTHOR);
+		sQuotesProjectionMap.put(Quote.QUOTE, Quote.QUOTE);
+
+		// Support for Live Folders.
+		// sLiveFolderProjectionMap = new HashMap<String, String>();
+		// sLiveFolderProjectionMap.put(LiveFolders._ID, Quotes._ID + " AS " +
+		// LiveFolders._ID);
+		// sLiveFolderProjectionMap.put(LiveFolders.NAME, Quotes.AUTHOR + " AS "
+		// +
+		// LiveFolders.NAME);
+		// Add more columns here for more robust Live Folders.
+	}
 }
